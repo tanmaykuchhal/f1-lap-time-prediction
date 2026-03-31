@@ -1,0 +1,273 @@
+---
+title: "F1 Fastest Lap Prediction "
+author: "Vikram Puri, Ronit Vaswani, Tanmay Kuchhal"
+date: "`r Sys.Date()`"
+output:    
+      html_document:
+         toc: yes
+         toc_float: yes
+---
+
+
+```{r setup, include = FALSE}
+#load packages, read in your dataset if external to a package, 
+#and set global options. I have set all code chunks to not echo,
+#and to not print messages or warnings.  If you want to echo a particular code chunk to highlight something, you can do this individually for that code chunk.
+
+
+library(tidyverse)        #umbrella package
+library(tidymodels)       #modeling
+knitr::opts_chunk$set( echo = FALSE,    
+                       message = FALSE,
+                       warning = FALSE)
+
+races <- read_csv("f1db-races-race-results.csv")
+
+
+
+```
+
+## Filtered Data
+
+```{r filter-data, echo=FALSE}
+
+race_2022 <- races %>% filter(year >= 2022) %>% select(
+    driverId,              # Driver Name
+    points,                # How many points the driver receives from the race
+    raceId,                # Track (for One-Hot Encoding)
+    positionText,          # Race Winner (for Binary Encoding)
+    constructorId,         # Constructor (for One-Hot Encoding)
+    engineManufacturerId,  # Engine Manufacturer (for One-Hot Encoding)
+    pitStops,              # Number of Pit Stops (Discrete Int)
+    gridPositionNumber,    # Grid Position (Discrete Int)
+    timeMillis,            # Fastest Lap Time (Continuous, Log-Transform)
+    year,                  # Year of the race
+    round,                 # Race number in the season
+    timePenaltyMillis,    # Time accrued from penalties
+    laps
+  )
+
+
+
+race_2022 <- race_2022 %>%
+  mutate(log_time = log(timeMillis))
+
+
+```
+
+
+## Introduction
+
+Analyzing Formula 1 lap times can provide critical insights into performance optimization, strategic decision-making, and track-specific dynamics. Lap times reflect the combined influence of car engineering, driver skill, and strategic choices, all of which are essential in a sport where milliseconds can decide outcomes. By studying variables like grid position, pit stops, and engine type, teams can identify optimal setups and anticipate track-specific effects on performance. Predictive modeling further allows teams to simulate and refine strategies before races, enabling data-driven decisions that maximize competitive advantage. This data-driven approach to F1 racing helps teams continually adapt, optimizing car setups, and strategies to gain an edge in one of the most technologically advanced sports.
+
+
+We are using the data set “races” which has all the data such as year, fastest lap,  starting position, finishing position, race time, race position , number of pitstops , track name , constructor , engine manufacturer etc. We have filtered the dataset to use the data from 2020 onwards to have a more accurate prediction of the fastest lap with more abundant data available for those years.
+
+We got the dataset from F1DB (open source Formula 1 Detector). 
+Link: https://github.com/f1db 
+
+
+Vikram collected the data from the F1DB. After that we collectively shortlisted the variables we needed to answer our question. The variables we collected are 
+1. Race Winner
+2. Constructor and Engine manufacturer
+3. Number of pit-stops
+4. Grid position
+5. Track
+
+## Codebook
+
+| Variable               | Description                                           | Class        | Possible Values |
+|------------------------|-------------------------------------------------------|--------------|-----------------|
+| `raceId`               | Unique identifier for each race                       | Categorical  | Various IDs     |
+| `positionText`         | Finishing position (1 = winner)                       | Categorical  | "1", "2", etc.  |
+| `constructorId`        | Team or constructor ID                                | Categorical  | Various IDs     |
+| `engineManufacturerId` | Engine manufacturer ID                                | Categorical  | Various IDs     |
+| `pitStops`             | Number of pit stops made during the race              | Integer      | 0, 1, 2, etc.   |
+| `gridPositionNumber`   | Starting grid position                                | Integer      | 1, 2, 3, etc.   |
+| `timeMillis`           | Fastest lap time in milliseconds                      | Numeric      | Any positive number |
+
+
+
+## Data Glimpse
+
+```{r peek-at-data, echo = FALSE}
+glimpse(race_2022)
+
+
+```
+
+
+
+## Data Analysis Plan 
+
+Response Variable (Y): The response variable is timeMillis, which records the fastest lap time (in milliseconds). We plan to log-transform this variable to reduce skewness, making it more suitable for predictive modeling.
+
+Predictors (X):
+Numerical Predictors:
+gridPositionNumber: The starting grid position, which affects lap time due to traffic and overtaking opportunities.
+pitStops: The number of pit stops, impacting overall lap time based on pit strategies and tire degradation.
+Categorical Predictors:
+constructorId: Represents the constructor team (e.g., Mercedes, Ferrari) and includes car design and engineering factors.
+engineManufacturerId: Indicates the engine provider, a crucial element influencing lap speed and efficiency.
+raceId: Tracks the specific race, which will be one-hot encoded to capture track-specific variations in lap times.
+
+## Challenges
+
+Missing Values: Some data points may have missing values, particularly in pit stops. These will require imputation or filtering to maintain dataset integrity.
+Data Skewness: The distribution of timeMillis is potentially skewed, requiring a log transformation to normalize it for accurate predictions.
+
+
+Histogram for timeMillis pre- and post-log transformation to check for normality.
+
+# Histogram of timeMillis before log transformation
+
+```{r histogram, echo=FALSE}
+
+ggplot(data = race_2022, mapping = aes(x = timeMillis / 1000)) +
+  geom_histogram(binwidth = 200) +
+  labs(x = "Lap Time (in seconds)",
+       title = "Histogram of Fastest Lap Times (Original Scale)") +
+  theme_minimal()
+```
+
+Box plots of timeMillis by constructorId and engineManufacturerId to understand team and engine impact on lap times.
+# Combined box plot of timeMillis by constructorId, faceted by engineManufacturerId
+
+```{r boxplot, echo=FALSE}
+ggplot(data = race_2022, mapping = aes(x = constructorId, y = timeMillis / 60000)) +
+  geom_boxplot() +
+  facet_wrap(~ engineManufacturerId) +
+  labs(title = "Fastest Lap Time by Constructor and Engine Manufacturer",
+       x = "Constructor ID",
+       y = "Fastest Lap Time (minutes)") +
+  theme_minimal()
+```
+
+Scatter plot of gridPositionNumber vs. timeMillis to explore the relationship between starting position and lap time.
+```{r scat, echo=FALSE}
+ggplot(data = race_2022 , 
+       mapping = aes(x= gridPositionNumber , y= timeMillis / 60000)) + 
+  geom_point() + 
+  labs(title = "Sactterplot of grid position vs time" , 
+       x= "Grid Position" , 
+       y= "Time(in minutes)")
+
+```
+
+Each of us will take responsibility for at least one visualization and statistical summary, which will give insights into the dataset and confirm the appropriateness of chosen variables.
+
+In terms of additional statistical content required in this section , be sure that you include: 
+
+ - a clear description of the response and explanatory variables your team will be considering
+ - if you will be working with a transformation of the response variable, please describe this here with before and after pictures.
+ - if you will be recoding any of the variables (for example, collapsing categories in a categorical variable with numerous levels), please describe this here.
+
+In this section, your group will build several models for the response variable mentioned in the Introduction. Each group member is responsible for proposing and fitting one model each. In other words, groups of size 3 will build three models, while groups of size 2 or 4 will build two or four models respectively. Please see the project instructions for full details.
+
+
+### Section 2.1 - Model proposed by Tanmay Kuchhal
+
+```{r data}
+race_2022%>%
+  filter(!is.na(timeMillis))%>%
+  filter(!is.na(laps))%>%
+  filter(!is.na(points))%>%
+  filter(!is.na(constructorId))
+
+```
+
+```{r}
+race_2022 %>% summarize(corr=cor(points, laps, use="complete.obs") )
+```
+
+Since correlation is 0.00653, that these 2 datasets are good enought to be used.
+
+```{r dsp}
+set.seed(447)
+race_2022_sp <- initial_split(race_2022 , prop = 0.5)
+train_2022_sp <- training(race_2022_sp)
+test_2022_sp <- testing(race_2022_sp)
+
+```
+
+```{r xy}
+ggplot(data = race_2022, mapping = aes(x = points, y = timeMillis, color = constructorId)) +
+  geom_point(alpha = 0.9, size = 2) +
+  geom_smooth(method="lm", alpha = .001)
+  labs(
+    title = "Scatter Plot of Time in Milliseconds vs Points",
+    x = "Points",
+    y = "Time (Milliseconds)",
+    color = "Constructor ID"
+  ) +
+  theme_minimal()
+
+```
+Why This Plot Was Chosen:
+Understanding Performance Trends:
+
+The points scored in a race are a direct indicator of the driver and team's performance. Teams and drivers with better-performing cars often score higher points.
+By plotting points against the fastest lap time, we can investigate how scoring higher relates to achieving faster laps, as lower timeMillis typically indicates better lap performance.
+Constructor-Level Insights:
+
+The inclusion of constructorId allows for identifying team-specific trends. For example, certain constructors might consistently achieve faster lap times, showcasing better engineering and race strategies.
+Importance of the Trendline:
+
+The linear trendline (geom_smooth()) provides a summary of the overall relationship between points and lap times. A negative slope would suggest that as points increase, lap times decrease, indicating better performance.
+
+```{r hp}
+ggplot(data = race_2022, aes(x = laps, y = ..count.., fill = constructorId)) +
+  geom_histogram(binwidth = 1, position = "stack", color = "black") +
+  labs(
+    title = "Histogram of Laps with Count on y-axis Filled by Constructor ID",
+    x = "Laps",
+    y = "Count",
+    fill = "Constructor ID"
+  ) +
+  theme_minimal()
+
+```
+Why This Plot Was Chosen:
+Understanding Race Dynamics:
+
+Laps completed can indicate race length, driver performance, and car reliability. Drivers completing fewer laps might have retired early due to mechanical failures, accidents, or disqualifications.
+By plotting this distribution, we can identify trends in constructor reliability and performance across races.
+Constructor-Level Analysis:
+
+The constructorId color fill helps uncover which teams consistently complete full race distances. Teams with significant counts for shorter laps may struggle with car reliability or strategic errors.
+Importance of Distribution:
+
+The histogram allows us to understand whether the dataset is skewed towards certain constructors or if the laps completed are evenly distributed across teams.
+Constructors that consistently complete full race distances likely have more reliable cars and effective strategies.
+```{r 1}
+set.seed(447)
+data_split <- initial_split(race_2022, prop = 0.5)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+This chunk splits the data into two subsets: training and testing, with a 50-50 split to ensure a balanced dataset for model evaluation. Setting a seed ensures reproducibility of the split.
+```{r 2}
+model_1 <- lm(timeMillis ~ laps + constructorId, data = train_data)
+model_1%>%
+  tidy()
+```
+
+```{r}
+model_1 %>% glance() %>%
+select(adj.r.squared)
+```
+The results of our linear regression model show an R^2
+  value of 0.00391, indicating that only 0.39% of the variance in the fastest lap times (log-transformed) is explained by the predictors included in this analysis. This low value suggests that the current set of predictors—such as laps, grid position, constructor ID, and points—may not adequately capture the factors that significantly influence lap times.
+This chunk fits a linear regression model predicting the fastest lap time (timeMillis) 
+using the number of laps and constructorId as explanatory variables.
+```{r 3}
+model_1%>%
+augment(newdata = test_data) %>%
+rmse(truth = timeMillis, estimate = .fitted)
+```
+This chunk calculates the RMSE of the model's predictions on the test set. 
+With an RMSE of 1259 seconds, this model shows a significant deviation between 
+predicted and actual lap times. Such a high RMSE indicates that the model's 
+predictions are not very accurate, making this model unfavorable for real-world 
+use cases where precision is critical. A better model with improved explanatory 
+variables and feature engineering might be necessary to achieve a more acceptable RMSE.
