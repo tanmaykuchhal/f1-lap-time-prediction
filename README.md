@@ -76,4 +76,4 @@ install.packages(c("tidyverse", "tidymodels"))
 
 ## Authors
 
-Tanmay Kuchhal, Vikram Puri, Ronit Vaswani — University of Washington
+Tanmay Kuchhal — University of Washington
